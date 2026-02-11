@@ -1,47 +1,174 @@
 ---
-title: "The Pipe Equivalence Myth: When `f() |> g()` Is Not the Same as `g(f())`"
-author: "RG Thomas"
+title: >
+  The Pipe Equivalence Myth: When `f() |> g()` Is Not
+  the Same as `g(f())`
+subtitle: >
+  Why Non-Standard Evaluation Breaks the Most Common
+  Assumption About R Pipes
+author: "Ronald G. Thomas"
 date: "2026-01-31"
-categories: [R, metaprogramming, pipes]
+categories: [R Programming, Data Science]
+description: >
+  I did not really know that piping and nesting function
+  calls were semantically different operations until a
+  subtle bug in an expression-capturing wrapper forced me
+  to confront how R's lazy evaluation interacts with the
+  pipe operator.
+image: "media/images/hero.png"
+document-type: "blog"
 draft: false
-description: |
-  Most R programmers assume that `f() |> g()` is equivalent to `g(f())`.
-  This assumption breaks down with non-standard evaluation, leading to
-  subtle bugs. This post explains why, when it matters, and how to work
-  around it.
+execute:
+  echo: true
+  warning: false
+  message: false
 format:
   html:
     toc: true
     code-fold: false
+    code-tools: false
 bibliography: references.bib
 ---
 
-## The Assumption
+![Pipe equivalence in R -- a closer look at when the
+assumption breaks
+down.](media/images/hero.png){.img-fluid width=80%}
 
-Ask any R programmer what `x |> f()` means, and they will tell you it is
-equivalent to `f(x)`. The pipe operator is just syntactic sugar for function
+*When pipes meet metaprogramming, the results may
+surprise you.*
+
+# Introduction
+
+I did not really know that `f() |> g()` and `g(f())`
+were anything other than interchangeable notations until
+I wrote a plot wrapper that captured user expressions for
+logging. The wrapper worked perfectly with nested calls
+but silently produced wrong output when piped. That
+experience sent me down a rabbit hole into R's evaluation
+model, and I found that the "equivalence" every tutorial
+teaches has a significant caveat that is rarely discussed.
+
+Most R programmers -- myself included -- internalize the
+pipe as pure syntactic sugar. The documentation and
+textbooks reinforce this mental model, and for the vast
+majority of everyday code, it holds. But there is a class
+of functions where the assumption breaks down completely,
+and understanding why reveals something fundamental about
+how R works under the hood.
+
+This post documents what I learned about the interaction
+between pipes, lazy evaluation, and non-standard
+evaluation (NSE). I walk through the problem, show
+exactly when and why the equivalence fails, and present
+practical workarounds for designing pipe-safe APIs.
+
+## Motivations
+
+- I encountered a silent bug in a plot wrapper function
+  that only manifested when users piped input instead of
+  nesting calls, and I needed to understand why.
+- I wanted to develop a deeper understanding of R's
+  evaluation semantics beyond the surface-level "pipe is
+  just sugar" explanation.
+- I found that tutorials and textbooks rarely mention
+  this limitation, and I wanted to document it clearly
+  for my own reference.
+- I was building several utility functions that used
+  `substitute()` and `match.call()`, and I needed to
+  know which patterns were pipe-safe and which were not.
+- I wanted to understand the relationship between
+  referential transparency, lazy evaluation, and
+  non-standard evaluation in R.
+
+## Objectives
+
+1. Demonstrate that `f() |> g()` and `g(f())` produce
+   different results when `g()` uses non-standard
+   evaluation.
+2. Explain the evaluation order difference between piped
+   and nested calls, with step-by-step tracing.
+3. Catalogue which R functions and metaprogramming tools
+   are affected by this problem.
+4. Present four practical design patterns for writing
+   functions that work correctly regardless of how they
+   are called.
+
+I am documenting my learning process here. If you spot
+errors or have better approaches, please let me know in
+the Let's Connect section at the end.
+
+![A workspace for thinking about code evaluation
+order.](media/images/ambiance1.png){.img-fluid}
+
+*Sometimes the details of how code runs matter as much as
+what it computes.*
+
+# Prerequisites and Setup
+
+This post is conceptual and uses minimal code. No
+special packages are required beyond base R. The rlang
+package appears in one example to illustrate tidy
+evaluation, but the core concepts rely entirely on base R
+functions.
+
+**Background assumed:** Familiarity with writing R
+functions, basic understanding of the pipe operator
+(`|>` or `%>%`), and awareness that R has both standard
+and non-standard evaluation.
+
+```{r}
+#| eval: false
+
+# The only external package referenced (one example)
+# install.packages("rlang")
+library(rlang)
+```
+
+# What is Pipe Equivalence?
+
+Pipe equivalence is the widely-taught principle that
+`x |> f()` means exactly the same thing as `f(x)`. The
+pipe takes the result on the left and passes it as the
+first argument to the function on the right. Every R
+tutorial, textbook, and vignette states this as fact, and
+for value-based functions it is true. The equivalence
+breaks, however, when the receiving function inspects the
+*expression* it was given rather than just the *value*.
+This happens with any function that uses non-standard
+evaluation -- functions like `substitute()`,
+`match.call()`, and their tidy evaluation counterparts.
+
+# The Assumption Everyone Teaches
+
+Ask any R programmer what `x |> f()` means, and they
+will tell you it is equivalent to `f(x)`. The pipe
+operator is just syntactic sugar for function
 composition, right?
 
-This is exactly what the documentation and tutorials tell us:
+This is exactly what the documentation and tutorials tell
+us:
 
 > "`x %>% f` is equivalent to `f(x)`"
 >
 > "`x %>% f(y)` is equivalent to `f(x, y)`"
 >
-> "`x %>% f %>% g %>% h` is equivalent to `h(g(f(x)))`"
+> "`x %>% f %>% g %>% h` is equivalent to
+> `h(g(f(x)))`"
 >
 > --- A popular R package vignette
 
 And from a widely-used data science textbook:
 
-> "The pipe takes the thing on its left and passes it along to the function
-> on its right so that `x |> f(y)` is equivalent to `f(x, y)`, and
-> `x |> f(y) |> g(z)` is equivalent to `g(f(x, y), z)`."
+> "The pipe takes the thing on its left and passes it
+> along to the function on its right so that
+> `x |> f(y)` is equivalent to `f(x, y)`, and
+> `x |> f(y) |> g(z)` is equivalent to
+> `g(f(x, y), z)`."
 
 Tutorials reinforce this message:
 
-> "Multiple pipes can be chained together, such that `x %>% f() %>% g() %>%
-> h()` is equivalent to `h(g(f(x)))`."
+> "Multiple pipes can be chained together, such that
+> `x %>% f() %>% g() %>% h()` is equivalent to
+> `h(g(f(x)))`."
 >
 > --- A popular online R tutorial
 
@@ -55,14 +182,15 @@ log(sqrt(16))
 
 Both return `r log(sqrt(16))`. So far, so good.
 
-This equivalence holds for the vast majority of R code. But there is a class
-of functions where this assumption breaks down completely, and understanding
-why reveals something fundamental about how R works.
+This equivalence holds for the vast majority of R code.
+But there is a class of functions where this assumption
+breaks down completely, and understanding why reveals
+something fundamental about how R works.
 
-## When the Equivalence Breaks
+# When the Equivalence Breaks
 
-Consider a function that needs to capture the *expression* passed to it, not
-just its *value*:
+Consider a function that needs to capture the
+*expression* passed to it, not just its *value*:
 
 ```{r}
 capture_expr <- function(expr) {
@@ -76,16 +204,19 @@ capture_expr(sqrt(16))
 sqrt(16) |> capture_expr()
 ```
 
-The direct call captures `"sqrt(16)"` as a string. The piped version captures
-something entirely different---the intermediate result after `sqrt(16)` has
-already been evaluated.
+The direct call captures `"sqrt(16)"` as a string. The
+piped version captures something entirely different --
+the intermediate result after `sqrt(16)` has already been
+evaluated.
 
-This is not a bug. It is a fundamental consequence of how pipes work.
+This is not a bug. It is a fundamental consequence of how
+pipes work.
 
 ## The Evaluation Order Problem
 
-The pipe operator evaluates left-to-right *before* passing to the next
-function. By the time `capture_expr()` can call `substitute()`, it only sees
+The pipe operator evaluates left-to-right *before*
+passing to the next function. By the time
+`capture_expr()` can call `substitute()`, it only sees
 the return value, not the original expression.
 
 ```{r}
@@ -99,37 +230,53 @@ Here is the sequence of events:
 **Direct call: `capture_expr(sqrt(16))`**
 
 1. R sees the call to `capture_expr()`
-2. The argument `sqrt(16)` is passed *unevaluated* (lazy evaluation)
-3. Inside `capture_expr()`, `substitute(expr)` captures `sqrt(16)`
+2. The argument `sqrt(16)` is passed *unevaluated*
+   (lazy evaluation)
+3. Inside `capture_expr()`, `substitute(expr)` captures
+   `sqrt(16)`
 4. `deparse()` converts it to the string `"sqrt(16)"`
 
 **Piped call: `sqrt(16) |> capture_expr()`**
 
-1. R evaluates `sqrt(16)` → returns `4`
+1. R evaluates `sqrt(16)` -- returns `4`
 2. The value `4` is passed to `capture_expr()`
-3. Inside `capture_expr()`, `substitute(expr)` captures `4`
+3. Inside `capture_expr()`, `substitute(expr)` captures
+   `4`
 4. `deparse()` converts it to the string `"4"`
 
-The critical difference: with direct calls, R's lazy evaluation means
-arguments are passed as *promises* containing the unevaluated expression. The
-pipe forces evaluation before the handoff.
+The critical difference: with direct calls, R's lazy
+evaluation means arguments are passed as *promises*
+containing the unevaluated expression. The pipe forces
+evaluation before the handoff.
 
-## Why This Matters: A Real-World Example
+![Diving deeper into R's evaluation
+semantics.](media/images/ambiance2.jpg){.img-fluid}
 
-This is not just academic. Consider building a plot wrapper that captures what
-the user typed for logging or history:
+*Understanding the internals helps explain the surface
+behaviour.*
+
+# A Real-World Example
+
+This is not just academic. I found that the problem
+surfaces immediately when building practical tools.
+Consider building a plot wrapper that captures what the
+user typed for logging or history:
 
 ```{r}
 #| eval: false
 
-# Desired behavior: capture "plot(mtcars$wt, mtcars$mpg)" for the log
+# Desired behavior: capture "plot(mtcars$wt,
+# mtcars$mpg)" for the log
 zzplot <- function(expr) {
   # Capture what the user typed
   code <- deparse(substitute(expr))
 
   # Open device, evaluate, close device
   png("plot.png")
-  eval(substitute(expr), envir = parent.frame())
+  eval(
+    substitute(expr),
+    envir = parent.frame()
+  )
   dev.off()
 
   # Log the code
@@ -151,12 +298,14 @@ The wrapper function needs to:
 2. Evaluate it inside a graphics device context
 3. Log what was executed
 
-With piping, step 1 fails because the plot has already been drawn to whatever
-device was active *before* `zzplot()` even runs.
+With piping, step 1 fails because the plot has already
+been drawn to whatever device was active *before*
+`zzplot()` even runs.
 
 ## Functions Affected by This Problem
 
-Any function using non-standard evaluation (NSE) is potentially affected:
+Any function using non-standard evaluation (NSE) is
+potentially affected:
 
 | Function | Purpose | Pipe-safe? |
 |----------|---------|------------|
@@ -168,20 +317,23 @@ Any function using non-standard evaluation (NSE) is potentially affected:
 | `quote()` | Quote an expression | Yes* |
 | `bquote()` | Quote with substitution | Yes* |
 
-\* These quote the literal argument, so piping changes *what* gets quoted.
+\* These quote the literal argument, so piping changes
+*what* gets quoted.
 
-Many tidyverse functions use NSE internally but are designed to work with
-pipes because they evaluate captured expressions in data contexts. However,
-when *you* write functions that need to capture user expressions, the pipe
-becomes problematic.
+Many tidyverse functions use NSE internally but are
+designed to work with pipes because they evaluate
+captured expressions in data contexts. However, when
+*you* write functions that need to capture user
+expressions, the pipe becomes problematic.
 
 ## The Native Pipe vs. Magrittr
 
 Does it matter which pipe you use? Not for this problem.
 
-Both `|>` (native, R 4.1+) and `%>%` (magrittr) evaluate the left-hand side
-before passing it to the right. The native pipe is essentially a syntax
-transformation at parse time [@wickham2023base]:
+Both `|>` (native, R 4.1+) and `%>%` (magrittr) evaluate
+the left-hand side before passing it to the right. The
+native pipe is essentially a syntax transformation at
+parse time [@wickham2023base]:
 
 ```{r}
 #| eval: false
@@ -194,17 +346,18 @@ f(x, y)
 # But x is still evaluated before f() sees it
 ```
 
-The magrittr pipe does more work behind the scenes but has the same
-fundamental behavior: eager evaluation of the left-hand side
-[@bache2022magrittr].
+The magrittr pipe does more work behind the scenes but
+has the same fundamental behavior: eager evaluation of
+the left-hand side [@bache2022magrittr].
 
-Magrittr does offer `%!>%`, an "eager pipe" that forces evaluation at each
-step, but this is for controlling *when* side effects occur, not for enabling
-expression capture.
+Magrittr does offer `%!>%`, an "eager pipe" that forces
+evaluation at each step, but this is for controlling
+*when* side effects occur, not for enabling expression
+capture.
 
-## Workarounds and Design Patterns
+# Workarounds and Design Patterns
 
-### Pattern 1: Accept the Limitation
+## Pattern 1: Accept the Limitation
 
 Design your API to require wrapping, not piping:
 
@@ -212,18 +365,22 @@ Design your API to require wrapping, not piping:
 #| eval: false
 
 # Document that this is the correct usage
-zzplot(boxplot(mpg ~ cyl, data = mtcars))
+zzplot(
+  boxplot(mpg ~ cyl, data = mtcars)
+)
 
 # Not this
 boxplot(mpg ~ cyl, data = mtcars) |> zzplot()
 ```
 
-This is explicit and unambiguous. The tradeoff is that it breaks the "pipe
-everything" mental model some users have developed.
+This is explicit and unambiguous. The tradeoff is that it
+breaks the "pipe everything" mental model some users have
+developed.
 
-### Pattern 2: Provide Both APIs
+## Pattern 2: Provide Both APIs
 
-Offer a standard evaluation version alongside the NSE version:
+Offer a standard evaluation version alongside the NSE
+version:
 
 ```{r}
 #| eval: false
@@ -231,18 +388,18 @@ Offer a standard evaluation version alongside the NSE version:
 # NSE version - for interactive use
 zzplot(plot(x, y))
 
-# SE version - for programmatic use and piping (sort of)
+# SE version - for programmatic use and piping
 zzplot_expr(quote(plot(x, y)))
 
 # Or with a string
 zzplot_code("plot(x, y)")
 ```
 
-### Pattern 3: Use Quosures (Tidy Eval)
+## Pattern 3: Use Quosures (Tidy Eval)
 
-The rlang package provides quosures, which bundle an expression with its
-environment [@henry2023rlang]. This enables more robust expression capture in
-some contexts:
+The rlang package provides quosures, which bundle an
+expression with its environment [@henry2023rlang]. This
+enables more robust expression capture in some contexts:
 
 ```{r}
 #| eval: false
@@ -256,10 +413,11 @@ my_function <- function(expr) {
 }
 ```
 
-However, this still does not solve the pipe problem---`enquo()` captures what
-it receives, and the pipe has already evaluated the left-hand side.
+However, this still does not solve the pipe problem --
+`enquo()` captures what it receives, and the pipe has
+already evaluated the left-hand side.
 
-### Pattern 4: Redesign to Avoid NSE
+## Pattern 4: Redesign to Avoid NSE
 
 Sometimes the cleanest solution is to not use NSE at all:
 
@@ -274,17 +432,20 @@ zzplot_fn <- function(plot_fn, ...) {
 }
 
 # Usage (pipeable with anonymous functions)
-\() plot(mtcars$wt, mtcars$mpg) |> zzplot_fn()
+\() plot(mtcars$wt, mtcars$mpg) |>
+  zzplot_fn()
 ```
 
-This is less elegant but completely unambiguous about evaluation order.
+This is less elegant but completely unambiguous about
+evaluation order.
 
-## The Deeper Lesson: Referential Transparency
+# Checking Our Work: Referential Transparency
 
-This issue reflects a fundamental property of programming languages:
-*referential transparency*. A function is referentially transparent if you can
-replace any expression with its value without changing the program's behavior
-[@wickham2019advanced].
+This issue reflects a fundamental property of programming
+languages: *referential transparency*. A function is
+referentially transparent if you can replace any
+expression with its value without changing the program's
+behavior [@wickham2019advanced].
 
 ```{r}
 #| eval: false
@@ -299,55 +460,241 @@ g(2 + 2)  # Returns "2 + 2"
 g(4)      # Returns "4"
 ```
 
-NSE functions are not referentially transparent by design---they care about
-*how* you express something, not just *what* value it produces. Pipes assume
+NSE functions are not referentially transparent by
+design -- they care about *how* you express something,
+not just *what* value it produces. Pipes assume
 referential transparency because they pre-compute values.
 
-Hadley Wickham notes in *Advanced R*: "The biggest downside of NSE is that
-functions that use it are no longer referentially transparent"
+Hadley Wickham notes in *Advanced R*: "The biggest
+downside of NSE is that functions that use it are no
+longer referentially transparent"
 [@wickham2019advanced].
 
-## Conclusion
+## Things to Watch Out For
 
-The pipe equivalence `f() |> g() ≡ g(f())` holds for value semantics but fails
-for expression semantics. This is not a bug in R or the pipe operators; it is
-a fundamental tension between:
+I found several situations where this problem catches
+people off guard:
+
+1. **Plot wrappers with logging.** Any function that uses
+   `substitute()` to record what the user typed will
+   capture the wrong thing when piped.
+2. **Custom assertion functions.** If your assertion
+   function captures the expression for error messages
+   (like `stopifnot()` does internally), piping changes
+   the error output.
+3. **Tidyverse extensions.** Writing functions that wrap
+   `dplyr` verbs with additional `enquo()` logic can
+   behave differently depending on how users call them.
+4. **Debugging tools.** Functions that reconstruct the
+   call stack or print "you called f(x)" will show the
+   piped intermediate value rather than the original
+   expression.
+5. **Code generation.** Any metaprogramming that builds
+   code from captured expressions will generate different
+   code depending on whether the user piped or nested.
+
+![Reflecting on what we have
+learned.](media/images/ambiance3.jpg){.img-fluid}
+
+*The distinction between value semantics and expression
+semantics runs deep in R.*
+
+## Lessons Learnt
+
+### Conceptual Understanding
+
+- The pipe equivalence `f() |> g()` and `g(f())` holds
+  for *value semantics* but fails for *expression
+  semantics*. This is not a bug but a fundamental
+  property of how R evaluates code.
+- R's lazy evaluation passes arguments as unevaluated
+  *promises*, which NSE functions can inspect. The pipe
+  forces evaluation before the handoff, destroying the
+  promise.
+- Referential transparency is the key concept: pipes
+  assume it, and NSE functions violate it by design.
+- The tension between eager evaluation (pipes), lazy
+  evaluation (promises), and non-standard evaluation
+  (expression inspection) is inherent in R's design.
+
+### Technical Skills
+
+- I can now trace the evaluation order difference between
+  `capture_expr(sqrt(16))` and
+  `sqrt(16) |> capture_expr()` step by step.
+- I learned to distinguish between functions that are
+  pipe-safe (value-based) and those that are not
+  (expression-based) by checking whether they use
+  `substitute()`, `match.call()`, or `enquo()`.
+- I gained practical experience with four design patterns
+  for building pipe-compatible APIs: accepting the
+  limitation, dual APIs, quosures, and NSE avoidance.
+- I now understand why tidyverse functions work with pipes
+  despite using NSE internally -- they evaluate captured
+  expressions in data contexts rather than inspecting
+  them for the calling expression.
+
+### Gotchas and Pitfalls
+
+- The native pipe (`|>`) and magrittr pipe (`%>%`) both
+  have this limitation. Switching pipe operators does not
+  solve the problem.
+- The failure is *silent*: the piped version does not
+  throw an error; it simply captures the wrong thing.
+  This makes the bug difficult to detect without
+  explicit testing.
+- Documentation for NSE functions rarely mentions pipe
+  incompatibility. If you are writing such a function,
+  document the limitation explicitly.
+- Quosures (`enquo()`) do not solve the pipe problem --
+  they still receive the pre-evaluated value when the
+  call is piped.
+
+## Limitations
+
+- This post focuses on expression capture via
+  `substitute()` and related tools. Other forms of NSE
+  (such as formula evaluation or `eval(parse())`) may
+  interact with pipes differently and are not covered.
+- The examples use simple, isolated functions. In
+  production code, the interaction between pipes, NSE,
+  and environments can be more complex, particularly
+  with nested function calls.
+- I did not benchmark the performance implications of the
+  different workaround patterns. For most use cases the
+  performance difference is negligible, but this is not
+  verified.
+- The discussion treats `|>` and `%>%` as equivalent for
+  this problem. There are other differences between them
+  (placeholder syntax, anonymous function support) that
+  are outside the scope of this post.
+- This analysis is based on R 4.1+ behavior. Earlier
+  versions of R did not have the native pipe, and the
+  magrittr pipe has evolved over time.
+
+## Opportunities for Improvement
+
+1. Build a comprehensive test suite that validates
+   pipe-safety for a library of utility functions,
+   automatically flagging any function that uses NSE
+   internally.
+2. Investigate whether R's native pipe could be extended
+   to support a "lazy" mode that preserves promise
+   semantics, and assess the trade-offs.
+3. Create a static analysis tool (perhaps using the
+   `codetools` package) that warns when NSE functions
+   appear downstream of a pipe operator.
+4. Explore how other languages with pipe operators (Elixir,
+   F#, Julia) handle the tension between eager evaluation
+   and expression capture.
+5. Document this limitation in the context of specific
+   tidyverse extension patterns, providing a cookbook of
+   pipe-safe alternatives for common NSE use cases.
+
+# Wrapping Up
+
+The pipe equivalence `f() |> g()` and `g(f())` holds for
+value semantics but fails for expression semantics. This
+is not a bug in R or the pipe operators; it is a
+fundamental tension between:
 
 - **Eager evaluation** (pipes compute left-to-right)
-- **Lazy evaluation** (functions receive unevaluated promises)
-- **Non-standard evaluation** (functions inspect the expression, not just the
-  value)
+- **Lazy evaluation** (functions receive unevaluated
+  promises)
+- **Non-standard evaluation** (functions inspect the
+  expression, not just the value)
 
-When writing functions that use `substitute()`, `match.call()`, or similar
-metaprogramming tools, document clearly that piping will not work as expected.
-When using such functions, remember that wrapping `f(g(x))` and piping
-`x |> g() |> f()` are semantically different operations, even when they
-produce the same final value.
+What I found most valuable from this investigation is the
+clarity it brought to my understanding of R's evaluation
+model. The pipe is not "just sugar" -- it changes the
+evaluation semantics in a way that matters for a specific
+but important class of functions.
 
-Understanding this distinction is essential for effective R metaprogramming
-and explains why some tidyverse patterns require specific syntax that cannot
-be arbitrarily reformatted.
+For anyone writing functions that use `substitute()`,
+`match.call()`, or similar metaprogramming tools: document
+clearly that piping will not work as expected. For anyone
+using such functions: remember that wrapping `f(g(x))` and
+piping `x |> g() |> f()` are semantically different
+operations, even when they produce the same final value.
+
+Main takeaways:
+
+- Pipes force eager evaluation, destroying the lazy
+  promises that NSE functions depend on.
+- The failure is silent -- no error, just wrong output.
+- Four design patterns exist for working around this:
+  accept it, dual APIs, quosures, or avoid NSE entirely.
+- Understanding this distinction is essential for
+  effective R metaprogramming.
+
+# See Also
+
+## Related Posts
+
+- [Configure the Command Line for Data Science
+  Development](../../01-configtermzsh/configtermzsh/analysis/report/index.qmd)
+  -- Terminal and Zsh configuration for R workflows
+
+## Key Resources
+
+- [Non-standard
+  evaluation](http://adv-r.had.co.nz/Computing-on-the-language.html)
+  in *Advanced R* (1st ed.) by Hadley Wickham
+- [Evaluation](https://adv-r.hadley.nz/evaluation.html)
+  chapter in *Advanced R* (2nd ed.)
+- [Tidy Evaluation](https://tidyeval.tidyverse.org/)
+  book by the tidyverse team
+- [Standard and Non-Standard Evaluation in
+  R](https://www.brodieg.com/2020/05/05/on-nse/) by
+  Brodie Gaslam
+- [Differences between the base R and magrittr
+  pipes](https://tidyverse.org/blog/2023/04/base-vs-magrittr-pipe/)
+  on the tidyverse blog
+- [Design
+  tradeoffs](https://magrittr.tidyverse.org/articles/tradeoffs.html)
+  in magrittr
+- [Understanding Non-Standard Evaluation, Part
+  1](https://thomasadventure.blog/posts/understanding-nse-part1/)
+  by Thomas Adventureson
 
 ## References
 
 ::: {#refs}
 :::
 
-## Further Reading
+# Reproducibility
 
-- [Non-standard evaluation](http://adv-r.had.co.nz/Computing-on-the-language.html)
-  in *Advanced R* (1st ed.) by Hadley Wickham
-- [Evaluation](https://adv-r.hadley.nz/evaluation.html) chapter in *Advanced
-  R* (2nd ed.)
-- [Tidy Evaluation](https://tidyeval.tidyverse.org/) book by the tidyverse
-  team
-- [Standard and Non-Standard Evaluation in
-  R](https://www.brodieg.com/2020/05/05/on-nse/) by Brodie Gaslam
-- [Differences between the base R and magrittr
-  pipes](https://tidyverse.org/blog/2023/04/base-vs-magrittr-pipe/) on the
-  tidyverse blog
-- [Design tradeoffs](https://magrittr.tidyverse.org/articles/tradeoffs.html)
-  in magrittr
-- [Understanding Non-Standard Evaluation, Part
-  1](https://thomasadventure.blog/posts/understanding-nse-part1/) by Thomas
-  Adventureson
+This post is primarily conceptual with minimal executable
+code. The few code chunks that do execute require only
+base R (version 4.1 or later for native pipe support).
+
+```{r}
+sessionInfo()
+```
+
+**Files in this analysis:**
+
+```
+analysis/report/index.qmd    This blog post
+references.bib                Bibliography (BibTeX)
+```
+
+# Let's Connect
+
+- **GitHub:** [rgt47](https://github.com/rgt47)
+- **Twitter/X:** [@rgt47](https://twitter.com/rgt47)
+- **LinkedIn:**
+  [Ronald Glenn Thomas](https://linkedin.com/in/rgthomaslab)
+- **Email:**
+  [rgtlab.org/contact](https://rgtlab.org/contact)
+
+I would enjoy hearing from you if:
+
+- You spot an error or a better approach to any of the
+  code in this post.
+- You have suggestions for topics you would like to see
+  covered.
+- You want to discuss R programming, data science, or
+  reproducible research.
+- You have questions about anything in this tutorial.
+- You just want to say hello and connect.
