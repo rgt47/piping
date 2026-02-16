@@ -96,8 +96,7 @@ I am documenting my learning process here. If you spot
 errors or have better approaches, please let me know in
 the Let's Connect section at the end.
 
-![A workspace for thinking about code evaluation
-order.](media/images/ambiance1.png){.img-fluid}
+![](media/images/r-logo.png){.img-fluid width=30% fig-align="center"}
 
 *Sometimes the details of how code runs matter as much as
 what it computes.*
