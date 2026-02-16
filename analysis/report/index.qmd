@@ -7,7 +7,7 @@ subtitle: >
   Assumption About R Pipes
 author: "Ronald G. Thomas"
 date: "2026-01-31"
-categories: [R Programming, Data Science]
+categories: [r, metaprogramming, tidy-evaluation, lazy-evaluation, functional-programming]
 description: >
   I did not really know that piping and nesting function
   calls were semantically different operations until a
