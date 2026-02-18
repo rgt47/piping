@@ -9,11 +9,10 @@ author: "Ronald G. Thomas"
 date: "2026-01-31"
 categories: [r, metaprogramming, tidy-evaluation, lazy-evaluation, functional-programming]
 description: >
-  I did not really know that piping and nesting function
-  calls were semantically different operations until a
-  subtle bug in an expression-capturing wrapper forced me
-  to confront how R's lazy evaluation interacts with the
-  pipe operator.
+  Piping and nesting function calls are semantically
+  different operations. A subtle bug in an expression-
+  capturing wrapper reveals how R's lazy evaluation
+  interacts with the pipe operator.
 image: "media/images/hero.png"
 document-type: "blog"
 draft: false
@@ -29,7 +28,7 @@ format:
 bibliography: references.bib
 ---
 
-![Pipe equivalence in R -- a closer look at when the
+![Pipe equivalence in R: a closer look at when the
 assumption breaks
 down.](media/images/hero.png){.img-fluid width=80%}
 
@@ -38,46 +37,45 @@ surprise you.*
 
 # Introduction
 
-I did not really know that `f() |> g()` and `g(f())`
-were anything other than interchangeable notations until
-I wrote a plot wrapper that captured user expressions for
-logging. The wrapper worked perfectly with nested calls
-but silently produced wrong output when piped. That
-experience sent me down a rabbit hole into R's evaluation
-model, and I found that the "equivalence" every tutorial
-teaches has a significant caveat that is rarely discussed.
+Are `f() |> g()` and `g(f())` truly interchangeable
+notations? A plot wrapper that captured user expressions
+for logging revealed otherwise. The wrapper worked
+perfectly with nested calls but silently produced wrong
+output when piped. That experience leads directly into
+R's evaluation model, revealing that the "equivalence"
+every tutorial teaches has a significant caveat that is
+rarely discussed.
 
-Most R programmers -- myself included -- internalize the
-pipe as pure syntactic sugar. The documentation and
-textbooks reinforce this mental model, and for the vast
-majority of everyday code, it holds. But there is a class
-of functions where the assumption breaks down completely,
-and understanding why reveals something fundamental about
-how R works under the hood.
+Most R programmers internalize the pipe as pure syntactic
+sugar. The documentation and textbooks reinforce this
+mental model, and for the vast majority of everyday code,
+it holds. But there is a class of functions where the
+assumption breaks down completely, and understanding why
+reveals something fundamental about how R works under the
+hood.
 
-This post documents what I learned about the interaction
-between pipes, lazy evaluation, and non-standard
-evaluation (NSE). I walk through the problem, show
-exactly when and why the equivalence fails, and present
-practical workarounds for designing pipe-safe APIs.
+This post documents the interaction between pipes, lazy
+evaluation, and non-standard evaluation (NSE), walking
+through the problem, showing exactly when and why the
+equivalence fails, and presenting practical workarounds
+for designing pipe-safe APIs.
 
 ## Motivations
 
-- I encountered a silent bug in a plot wrapper function
+- To understand a silent bug in a plot wrapper function
   that only manifested when users piped input instead of
-  nesting calls, and I needed to understand why.
-- I wanted to develop a deeper understanding of R's
-  evaluation semantics beyond the surface-level "pipe is
-  just sugar" explanation.
-- I found that tutorials and textbooks rarely mention
-  this limitation, and I wanted to document it clearly
-  for my own reference.
-- I was building several utility functions that used
-  `substitute()` and `match.call()`, and I needed to
-  know which patterns were pipe-safe and which were not.
-- I wanted to understand the relationship between
-  referential transparency, lazy evaluation, and
-  non-standard evaluation in R.
+  nesting calls.
+- To develop a deeper understanding of R's evaluation
+  semantics beyond the surface-level "pipe is just
+  sugar" explanation.
+- To document a limitation that tutorials and textbooks
+  rarely mention.
+- To determine which utility function patterns using
+  `substitute()` and `match.call()` are pipe-safe and
+  which are not.
+- To understand the relationship between referential
+  transparency, lazy evaluation, and non-standard
+  evaluation in R.
 
 ## Objectives
 
@@ -92,9 +90,8 @@ practical workarounds for designing pipe-safe APIs.
    functions that work correctly regardless of how they
    are called.
 
-I am documenting my learning process here. If you spot
-errors or have better approaches, please let me know in
-the Let's Connect section at the end.
+Errors and better approaches are welcome; see the
+Feedback section at the end.
 
 ![](media/images/r-logo.png){.img-fluid width=30% fig-align="center"}
 
@@ -133,8 +130,8 @@ for value-based functions it is true. The equivalence
 breaks, however, when the receiving function inspects the
 *expression* it was given rather than just the *value*.
 This happens with any function that uses non-standard
-evaluation -- functions like `substitute()`,
-`match.call()`, and their tidy evaluation counterparts.
+evaluation (functions like `substitute()`,
+`match.call()`, and their tidy evaluation counterparts).
 
 # The Assumption Everyone Teaches
 
@@ -237,7 +234,7 @@ Here is the sequence of events:
 
 **Piped call: `sqrt(16) |> capture_expr()`**
 
-1. R evaluates `sqrt(16)` -- returns `4`
+1. R evaluates `sqrt(16)`, which returns `4`
 2. The value `4` is passed to `capture_expr()`
 3. Inside `capture_expr()`, `substitute(expr)` captures
    `4`
@@ -256,8 +253,8 @@ behaviour.*
 
 # A Real-World Example
 
-This is not just academic. I found that the problem
-surfaces immediately when building practical tools.
+This is not just academic. The problem surfaces
+immediately when building practical tools.
 Consider building a plot wrapper that captures what the
 user typed for logging or history:
 
@@ -460,7 +457,7 @@ g(4)      # Returns "4"
 ```
 
 NSE functions are not referentially transparent by
-design -- they care about *how* you express something,
+design: they care about *how* you express something,
 not just *what* value it produces. Pipes assume
 referential transparency because they pre-compute values.
 
@@ -471,8 +468,7 @@ longer referentially transparent"
 
 ## Things to Watch Out For
 
-I found several situations where this problem catches
-people off guard:
+Several situations catch people off guard:
 
 1. **Plot wrappers with logging.** Any function that uses
    `substitute()` to record what the user typed will
@@ -518,20 +514,21 @@ semantics runs deep in R.*
 
 ### Technical Skills
 
-- I can now trace the evaluation order difference between
+- Tracing the evaluation order difference between
   `capture_expr(sqrt(16))` and
-  `sqrt(16) |> capture_expr()` step by step.
-- I learned to distinguish between functions that are
-  pipe-safe (value-based) and those that are not
-  (expression-based) by checking whether they use
-  `substitute()`, `match.call()`, or `enquo()`.
-- I gained practical experience with four design patterns
-  for building pipe-compatible APIs: accepting the
-  limitation, dual APIs, quosures, and NSE avoidance.
-- I now understand why tidyverse functions work with pipes
-  despite using NSE internally -- they evaluate captured
-  expressions in data contexts rather than inspecting
-  them for the calling expression.
+  `sqrt(16) |> capture_expr()` step by step clarifies
+  the underlying mechanism.
+- Distinguishing between functions that are pipe-safe
+  (value-based) and those that are not (expression-based)
+  requires checking whether they use `substitute()`,
+  `match.call()`, or `enquo()`.
+- Four design patterns exist for building pipe-compatible
+  APIs: accepting the limitation, dual APIs, quosures,
+  and NSE avoidance.
+- Tidyverse functions work with pipes despite using NSE
+  internally because they evaluate captured expressions
+  in data contexts rather than inspecting them for the
+  calling expression.
 
 ### Gotchas and Pitfalls
 
@@ -559,10 +556,10 @@ semantics runs deep in R.*
   production code, the interaction between pipes, NSE,
   and environments can be more complex, particularly
   with nested function calls.
-- I did not benchmark the performance implications of the
-  different workaround patterns. For most use cases the
-  performance difference is negligible, but this is not
-  verified.
+- This post did not benchmark the performance implications
+  of the different workaround patterns. For most use cases
+  the performance difference is negligible, but this is
+  not verified.
 - The discussion treats `|>` and `%>%` as equivalent for
   this problem. There are other differences between them
   (placeholder syntax, anonymous function support) that
@@ -603,11 +600,11 @@ fundamental tension between:
 - **Non-standard evaluation** (functions inspect the
   expression, not just the value)
 
-What I found most valuable from this investigation is the
-clarity it brought to my understanding of R's evaluation
-model. The pipe is not "just sugar" -- it changes the
-evaluation semantics in a way that matters for a specific
-but important class of functions.
+The most valuable aspect of this investigation is the
+clarity it brings to understanding R's evaluation model.
+The pipe is not "just sugar"; it changes the evaluation
+semantics in a way that matters for a specific but
+important class of functions.
 
 For anyone writing functions that use `substitute()`,
 `match.call()`, or similar metaprogramming tools: document
@@ -620,7 +617,7 @@ Main takeaways:
 
 - Pipes force eager evaluation, destroying the lazy
   promises that NSE functions depend on.
-- The failure is silent -- no error, just wrong output.
+- The failure is silent: no error, just wrong output.
 - Four design patterns exist for working around this:
   accept it, dual APIs, quosures, or avoid NSE entirely.
 - Understanding this distinction is essential for
@@ -632,7 +629,7 @@ Main takeaways:
 
 - [Configure the Command Line for Data Science
   Development](../../01-configtermzsh/configtermzsh/analysis/report/index.qmd)
-  -- Terminal and Zsh configuration for R workflows
+: Terminal and Zsh configuration for R workflows
 
 ## Key Resources
 
@@ -678,22 +675,9 @@ analysis/report/index.qmd    This blog post
 references.bib                Bibliography (BibTeX)
 ```
 
-# Let's Connect
+# Feedback
 
-- **GitHub:** [rgt47](https://github.com/rgt47)
-- **Twitter/X:** [@rgt47](https://twitter.com/rgt47)
-- **LinkedIn:**
-  [Ronald Glenn Thomas](https://linkedin.com/in/rgthomaslab)
-- **Email:**
-  [rgtlab.org/contact](https://rgtlab.org/contact)
-
-I would enjoy hearing from you if:
-
-- You spot an error or a better approach to any of the
-  code in this post.
-- You have suggestions for topics you would like to see
-  covered.
-- You want to discuss R programming, data science, or
-  reproducible research.
-- You have questions about anything in this tutorial.
-- You just want to say hello and connect.
+Corrections, suggestions, and questions are welcome.
+Please open an issue or pull request on the
+[GitHub repository](https://github.com/mygit)
+or send an email to user@example.com.
