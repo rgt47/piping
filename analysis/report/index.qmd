@@ -93,7 +93,7 @@ for designing pipe-safe APIs.
 Errors and better approaches are welcome; see the
 Feedback section at the end.
 
-![A moment of focus before diving into evaluation semantics.](media/images/placeholder-coffee-02.jpg){.img-fluid}
+![A moment of focus before diving into evaluation semantics.](media/images/ambiance1.png){.img-fluid}
 
 # Prerequisites and Setup
 
