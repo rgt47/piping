@@ -2,9 +2,6 @@
 title: >
   The Pipe Equivalence Myth: When `f() |> g()` Is Not
   the Same as `g(f())`
-subtitle: >
-  Why Non-Standard Evaluation Breaks the Most Common
-  Assumption About R Pipes
 author: "Ronald 'Ryy' G. Thomas"
 date: "2026-01-31"
 categories: [r, metaprogramming]
@@ -30,7 +27,7 @@ bibliography: references.bib
 
 ![Pipe equivalence in R: a closer look at when the
 assumption breaks
-down.](media/images/hero.png){.img-fluid width=80%}
+down.](media/images/hero.png){.img-fluid width=80% fig-align="center"}
 
 *When pipes meet metaprogramming, the results may
 surprise you.*
