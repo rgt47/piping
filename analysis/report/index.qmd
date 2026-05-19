@@ -30,7 +30,7 @@ assumption breaks
 down.](media/images/hero.png){.img-fluid width=80% fig-align="center"}
 
 *When pipes meet metaprogramming, the results may
-surprise you.*
+be surprising.*
 
 # Introduction
 
@@ -51,7 +51,7 @@ assumption breaks down completely, and understanding why
 reveals something fundamental about how R works under the
 hood.
 
-This post documents the interaction between pipes, lazy
+We document the interaction between pipes, lazy
 evaluation, and non-standard evaluation (NSE), walking
 through the problem, showing exactly when and why the
 equivalence fails, and presenting practical workarounds
@@ -129,9 +129,9 @@ evaluation (functions like `substitute()`,
 
 # The Assumption Everyone Teaches
 
-Ask any R programmer what `x |> f()` means, and they
-will tell you it is equivalent to `f(x)`. The pipe
-operator is just syntactic sugar for function
+Ask any R programmer what `x |> f()` means, and the
+answer will be that it is equivalent to `f(x)`. The
+pipe operator is just syntactic sugar for function
 composition, right?
 
 This is exactly what the documentation and tutorials tell
@@ -313,12 +313,12 @@ potentially affected:
 Many tidyverse functions use NSE internally but are
 designed to work with pipes because they evaluate
 captured expressions in data contexts. However, when
-*you* write functions that need to capture user
+one writes functions that need to capture user
 expressions, the pipe becomes problematic.
 
 ## The Native Pipe vs. Magrittr
 
-Does it matter which pipe you use? Not for this problem.
+Does the choice of pipe operator matter? Not for this problem.
 
 Both `|>` (native, R 4.1+) and `%>%` (magrittr) evaluate
 the left-hand side before passing it to the right. The
@@ -349,7 +349,8 @@ capture.
 
 ## Pattern 1: Accept the Limitation
 
-Design your API to require wrapping, not piping:
+Designing the API to require wrapping, not piping,
+is the most explicit path:
 
 ```{r}
 #| eval: false
@@ -433,8 +434,8 @@ evaluation order.
 
 This issue reflects a fundamental property of programming
 languages: *referential transparency*. A function is
-referentially transparent if you can replace any
-expression with its value without changing the program's
+referentially transparent when any expression can be
+replaced with its value without changing the program's
 behavior [@wickham2019advanced].
 
 ```{r}
@@ -451,7 +452,7 @@ g(4)      # Returns "4"
 ```
 
 NSE functions are not referentially transparent by
-design: they care about *how* you express something,
+design: they care about *how* something is expressed,
 not just *what* value it produces. Pipes assume
 referential transparency because they pre-compute values.
 
@@ -467,7 +468,7 @@ Several situations catch people off guard:
 1. **Plot wrappers with logging.** Any function that uses
    `substitute()` to record what the user typed will
    capture the wrong thing when piped.
-2. **Custom assertion functions.** If your assertion
+2. **Custom assertion functions.** If an assertion
    function captures the expression for error messages
    (like `stopifnot()` does internally), piping changes
    the error output.
@@ -536,7 +537,7 @@ semantics runs deep in R.*
   This makes the bug difficult to detect without
   explicit testing.
 - Documentation for NSE functions rarely mentions pipe
-  incompatibility. If you are writing such a function,
+  incompatibility. Authors of such functions should
   document the limitation explicitly.
 - Quosures (`enquo()`) do not solve the pipe problem --
   they still receive the pre-evaluated value when the
@@ -597,27 +598,28 @@ fundamental tension between:
   expression, not just the value)
 
 The most valuable aspect of this investigation is the
-clarity it brings to understanding R's evaluation model.
+understanding it provides of R's evaluation model.
 The pipe is not "just sugar"; it changes the evaluation
 semantics in a way that matters for a specific but
 important class of functions.
 
 For anyone writing functions that use `substitute()`,
-`match.call()`, or similar metaprogramming tools: document
-clearly that piping will not work as expected. For anyone
-using such functions: remember that wrapping `f(g(x))` and
-piping `x |> g() |> f()` are semantically different
-operations, even when they produce the same final value.
+`match.call()`, or similar metaprogramming tools:
+documenting that piping will not work as expected is
+warranted. For anyone using such functions: the
+distinction between wrapping `f(g(x))` and piping
+`x |> g() |> f()` is a semantic difference, even when
+both produce the same final value.
 
-Main takeaways:
-
-- Pipes force eager evaluation, destroying the lazy
-  promises that NSE functions depend on.
-- The failure is silent: no error, just wrong output.
-- Four design patterns exist for working around this:
-  accept it, dual APIs, quosures, or avoid NSE entirely.
-- Understanding this distinction is essential for
-  effective R metaprogramming.
+In conclusion, four points merit emphasis. First,
+pipes force eager evaluation, destroying the lazy
+promises that NSE functions depend on. Second, the
+failure is silent: no error is raised, but the output
+is wrong. Third, four design patterns exist for working
+around this limitation: accepting it, providing dual
+APIs, using quosures, or avoiding NSE entirely. Fourth,
+understanding this distinction is a prerequisite for
+effective R metaprogramming.
 
 # See Also
 
@@ -682,8 +684,10 @@ references.bib                Bibliography (BibTeX)
 
 I would enjoy hearing from you if:
 
-- You spot an error or a better approach to any of the code in this post.
-- You have suggestions for topics you would like to see covered.
-- You want to discuss R programming, data science, or reproducible research.
-- You have questions about anything in this tutorial.
-- You just want to say hello and connect.
+- An error or a better approach to any of the code
+  in this post comes to mind.
+- There are suggestions for topics to see covered.
+- The interest is in discussing R programming, data
+  science, or reproducible research.
+- There are questions about anything in this tutorial.
+- The goal is simply to say hello and connect.
